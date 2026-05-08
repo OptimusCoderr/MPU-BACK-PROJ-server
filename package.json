@@ -1,18 +1,19 @@
 {
   "name": "spineguard-api",
   "version": "1.0.0",
-  "description": "SpineGuard — Backend API (deploy separately on Vercel)",
+  "description": "SpineGuard — Backend API",
   "private": true,
-  "engines": {
-    "node": "20.x"
-  },
+  "engines": { "node": "20.x" },
   "scripts": {
-    "dev"   : "vercel dev",
-    "deploy": "vercel --prod",
-    "seed"  : "node lib/seed.js"
+    "start" : "node server.js",
+    "dev"   : "node server.js",
+    "seed"  : "node lib/seed.js",
+    "deploy": "vercel --prod"
   },
   "dependencies": {
+    "cors"     : "2.8.5",
     "dotenv"   : "16.4.5",
+    "express"  : "4.19.2",
     "mongoose" : "8.3.4",
     "pusher"   : "5.2.0"
   }
