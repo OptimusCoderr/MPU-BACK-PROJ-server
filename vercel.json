@@ -1,77 +1,37 @@
 {
   "version": 2,
+  "name": "spineguard-api",
   "functions": {
     "api/**/*.js": {
       "maxDuration": 10
     }
   },
-  "routes": [
+  "headers": [
     {
-      "handle": "filesystem"
-    },
-    {
-      "src": "/api/readings/latest",
-      "dest": "/api/readings/latest.js"
-    },
-    {
-      "src": "/api/readings/([^/]+)",
-      "dest": "/api/readings/[id].js"
-    },
-    {
-      "src": "/api/readings",
-      "dest": "/api/readings/index.js"
-    },
-    {
-      "src": "/api/sessions/start",
-      "dest": "/api/sessions/start.js"
-    },
-    {
-      "src": "/api/sessions/stop",
-      "dest": "/api/sessions/stop.js"
-    },
-    {
-      "src": "/api/sessions/active",
-      "dest": "/api/sessions/active.js"
-    },
-    {
-      "src": "/api/sessions/last",
-      "dest": "/api/sessions/last.js"
-    },
-    {
-      "src": "/api/sessions/([^/]+)",
-      "dest": "/api/sessions/[id].js"
-    },
-    {
-      "src": "/api/sessions",
-      "dest": "/api/sessions/index.js"
-    },
-    {
-      "src": "/api/patients/([^/]+)",
-      "dest": "/api/patients/[patientId].js"
-    },
-    {
-      "src": "/api/patients",
-      "dest": "/api/patients/index.js"
-    },
-    {
-      "src": "/api/comments/([^/]+)",
-      "dest": "/api/comments/[id].js"
-    },
-    {
-      "src": "/api/comments",
-      "dest": "/api/comments/index.js"
-    },
-    {
-      "src": "/api/status",
-      "dest": "/api/status/index.js"
-    },
-    {
-      "src": "/api/pusher/auth",
-      "dest": "/api/pusher/auth.js"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/index.html"
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin",  "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET,POST,PATCH,DELETE,OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type,Authorization" }
+      ]
     }
+  ],
+  "routes": [
+    { "src": "/api/readings/latest",    "dest": "/api/readings/latest.js" },
+    { "src": "/api/readings/([^/]+)",   "dest": "/api/readings/[id].js" },
+    { "src": "/api/readings",           "dest": "/api/readings/index.js" },
+    { "src": "/api/sessions/start",     "dest": "/api/sessions/start.js" },
+    { "src": "/api/sessions/stop",      "dest": "/api/sessions/stop.js" },
+    { "src": "/api/sessions/active",    "dest": "/api/sessions/active.js" },
+    { "src": "/api/sessions/last",      "dest": "/api/sessions/last.js" },
+    { "src": "/api/sessions/([^/]+)",   "dest": "/api/sessions/[id].js" },
+    { "src": "/api/sessions",           "dest": "/api/sessions/index.js" },
+    { "src": "/api/patients/([^/]+)",   "dest": "/api/patients/[patientId].js" },
+    { "src": "/api/patients",           "dest": "/api/patients/index.js" },
+    { "src": "/api/comments/([^/]+)",   "dest": "/api/comments/[id].js" },
+    { "src": "/api/comments",           "dest": "/api/comments/index.js" },
+    { "src": "/api/pusher/auth",        "dest": "/api/pusher/auth.js" },
+    { "src": "/api/status",             "dest": "/api/status/index.js" },
+    { "src": "/(.*)",                   "dest": "/api/status/index.js" }
   ]
 }

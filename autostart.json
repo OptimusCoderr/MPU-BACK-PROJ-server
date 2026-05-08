@@ -1,0 +1,68 @@
+{
+  "_comment": "SpineGuard autostart seed — loaded once on first boot when DB is empty. Edit this file to customise your initial data.",
+
+  "patients": [
+    {
+      "name"      : "User 1",
+      "patientId" : "User1",
+      "age"       : 25,
+      "email"     : "user1@spineguard.app",
+      "phone"     : "+234 800 000 0001",
+      "doctor"    : "Dr. Adeyemi",
+      "notes"     : "Default patient — created on first boot"
+    }
+  ],
+
+  "doctors": [
+    { "name": "Dr. Adeyemi" },
+    { "name": "Dr. Okafor"  }
+  ],
+
+  "comments": [
+    {
+      "doctor"    : "Dr. Adeyemi",
+      "patientId" : "User1",
+      "text"      : "Welcome to SpineGuard! Your posture journey starts today."
+    },
+    {
+      "doctor"    : "Dr. Adeyemi",
+      "patientId" : "User1",
+      "text"      : "Excellent progress — keep your lumbar engaged during study sessions."
+    },
+    {
+      "doctor"    : "Dr. Adeyemi",
+      "patientId" : "User1",
+      "text"      : "Stand and stretch every 30 minutes. Great slouch reduction this week!"
+    },
+    {
+      "doctor"    : "Dr. Okafor",
+      "patientId" : "User1",
+      "text"      : "Posture score improved by 12% from last week. Outstanding dedication."
+    }
+  ],
+
+  "demoReadings": [
+    { "pitch":  2.1, "roll":  0.4 },
+    { "pitch":  4.3, "roll": -1.2 },
+    { "pitch":  8.7, "roll":  0.8 },
+    { "pitch": 12.0, "roll": -0.5 },
+    { "pitch": 14.9, "roll":  1.1 },
+    { "pitch": 16.2, "roll":  0.3 },
+    { "pitch": 22.5, "roll": -2.0 },
+    { "pitch": 18.3, "roll":  0.9 },
+    { "pitch": 10.1, "roll": -0.7 },
+    { "pitch":  5.5, "roll":  0.2 }
+  ],
+
+  "demoSession": {
+    "patientId"       : "User1",
+    "plannedDuration" : 300,
+    "goodSeconds"     : 210,
+    "badSeconds"      : 90,
+    "slouchCount"     : 3,
+    "peakPitch"       : 22.5,
+    "score"           : 70,
+    "status"          : "Completed",
+    "notes"           : "Demo session — auto-generated on first boot"
+  }
+}
