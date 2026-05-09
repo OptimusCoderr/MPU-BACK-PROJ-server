@@ -14,15 +14,21 @@ const MAX_DUR      = 3600;
 const FRONTEND_URL = process.env.FRONTEND_URL || '*';
 
 // ── Pusher ─────────────────────────────────────────────────────────────────
-const pusher = new Pusher({
-  appId   : process.env.PUSHER_APP_ID,
-  key     : process.env.PUSHER_KEY,
-  secret  : process.env.PUSHER_SECRET,
-  cluster : process.env.PUSHER_CLUSTER || 'eu',
-  useTLS  : true,
-});
+let pusher = null;
+if (process.env.PUSHER_APP_ID && process.env.PUSHER_KEY && process.env.PUSHER_SECRET) {
+  pusher = new Pusher({
+    appId   : process.env.PUSHER_APP_ID,
+    key     : process.env.PUSHER_KEY,
+    secret  : process.env.PUSHER_SECRET,
+    cluster : process.env.PUSHER_CLUSTER || 'eu',
+    useTLS  : true,
+  });
+} else {
+  console.warn('[Pusher] Credentials missing — real-time events disabled');
+}
 
 async function push(event, data) {
+  if (!pusher) return;
   try { await pusher.trigger('spineguard', event, data); }
   catch (e) { console.error('[Pusher]', e.message); }
 }
@@ -41,32 +47,46 @@ function fmt(secs) {
 // ── App ────────────────────────────────────────────────────────────────────
 const app = express();
 
+// CORS — allow all origins, or restrict to FRONTEND_URL if set
 app.use(cors({
-  origin : FRONTEND_URL,
-  methods : ['GET','POST','PATCH','DELETE','OPTIONS'],
+  origin : FRONTEND_URL === '*' ? '*' : function(origin, cb) {
+    // Allow requests with no origin (curl, Postman, same-origin)
+    if (!origin) return cb(null, true);
+    if (origin === FRONTEND_URL) return cb(null, true);
+    cb(new Error(`CORS: origin ${origin} not allowed`));
+  },
+  methods        : ['GET','POST','PATCH','DELETE','OPTIONS'],
   allowedHeaders : ['Content-Type','Authorization'],
+  credentials    : false,
 }));
+
+// Handle OPTIONS preflight explicitly (belt-and-suspenders)
+app.options('*', cors());
+
 app.use(express.json());
 
-// Connect DB on every cold start
+// Connect DB — Vercel reuses the process between requests so this is fast after first call
 app.use(async (_req, _res, next) => {
   try { await connectDB(); next(); }
-  catch (e) { next(e); }
+  catch (e) {
+    console.error('[DB] Connection failed:', e.message);
+    next(e);
+  }
 });
 
 // ─────────────────────────────────────────────────────────────
-// STATUS
+// STATUS  GET /api/status
 // ─────────────────────────────────────────────────────────────
-
 app.get('/api/status', (_req, res) => {
   const states = ['disconnected','connected','connecting','disconnecting'];
-  const { connection: c } = require('mongoose');
+  const { connection: conn } = require('mongoose');
   res.json({
-    ok       : true,
-    env      : process.env.NODE_ENV || 'production',
-    db       : { connected: c.readyState === 1, state: states[c.readyState] },
-    threshold: THRESHOLD,
-    platform : 'vercel',
+    ok        : true,
+    env       : process.env.NODE_ENV || 'production',
+    db        : { connected: conn.readyState === 1, state: states[conn.readyState] || 'unknown' },
+    pusher    : !!pusher,
+    threshold : THRESHOLD,
+    platform  : 'vercel',
   });
 });
 
@@ -74,7 +94,7 @@ app.get('/api/status', (_req, res) => {
 // READINGS
 // ─────────────────────────────────────────────────────────────
 
-// POST /api/readings  — single or batch
+// POST /api/readings
 app.post('/api/readings', async (req, res, next) => {
   try {
     const { pitch, roll, readings } = req.body;
@@ -82,7 +102,7 @@ app.post('/api/readings', async (req, res, next) => {
     // Batch
     if (Array.isArray(readings)) {
       const valid = readings.filter(r => !isNaN(+r.pitch) && !isNaN(+r.roll));
-      if (!valid.length) return res.status(400).json({ error: 'No valid readings' });
+      if (!valid.length) return res.status(400).json({ error: 'No valid readings in batch' });
       const docs = valid.map(r => ({
         pitch: +r.pitch, roll: +r.roll, processed: false,
         recordedAt: r.recordedAt ? new Date(r.recordedAt) : new Date(),
@@ -108,14 +128,14 @@ app.post('/api/readings', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// GET /api/readings — list with filters
+// GET /api/readings
 app.get('/api/readings', async (req, res, next) => {
   try {
     const filter = {};
     if (req.query.sessionId) filter.sessionId = req.query.sessionId;
     if (req.query.processed !== undefined) filter.processed = req.query.processed === 'true';
-    const limit = Math.min(+req.query.limit || 500, 2000);
-    const page  = Math.max(+req.query.page  || 1, 1);
+    const limit = Math.min(+(req.query.limit) || 500, 2000);
+    const page  = Math.max(+(req.query.page)  || 1, 1);
     const skip  = (page - 1) * limit;
     const [data, total] = await Promise.all([
       Reading.find(filter).sort({ createdAt: 1 }).skip(skip).limit(limit).lean(),
@@ -125,7 +145,7 @@ app.get('/api/readings', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// GET /api/readings/latest
+// GET /api/readings/latest  — must be before /:id
 app.get('/api/readings/latest', async (_req, res, next) => {
   try {
     const r = await Reading.findOne().sort({ createdAt: -1 }).lean();
@@ -165,7 +185,7 @@ app.delete('/api/readings/:id', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// DELETE /api/readings?sessionId=… or ?before=…
+// DELETE /api/readings  (bulk)
 app.delete('/api/readings', async (req, res, next) => {
   try {
     const filter = {};
@@ -179,15 +199,15 @@ app.delete('/api/readings', async (req, res, next) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// SESSIONS
+// SESSIONS  — specific routes BEFORE /:id
 // ─────────────────────────────────────────────────────────────
 
 // POST /api/sessions/start
 app.post('/api/sessions/start', async (req, res, next) => {
   try {
     const existing = await Session.findOne({ status: 'In Progress' }).lean();
-    if (existing) return res.status(409).json({ error: 'Session already active', sessionId: existing._id });
-
+    if (existing)
+      return res.status(409).json({ error: 'Session already active', sessionId: existing._id });
     const dur = clamp(req.body?.duration, MIN_DUR, MAX_DUR, 2700);
     const doc = await Session.create({
       patientId: req.body?.patientId || 'User1',
@@ -195,7 +215,9 @@ app.post('/api/sessions/start', async (req, res, next) => {
       plannedDuration: dur, notes: req.body?.notes || '',
       status: 'In Progress',
     });
-    await push('session-started', { sessionId: String(doc._id), patientId: doc.patientId, sessionDuration: dur });
+    await push('session-started', {
+      sessionId: String(doc._id), patientId: doc.patientId, sessionDuration: dur,
+    });
     res.status(201).json(doc);
   } catch (e) { next(e); }
 });
@@ -205,7 +227,6 @@ app.post('/api/sessions/stop', async (req, res, next) => {
   try {
     const session = await Session.findOne({ status: 'In Progress' });
     if (!session) return res.status(404).json({ error: 'No active session' });
-
     const { elapsed=0, goodSeconds=0, badSeconds=0, slouchCount=0, peakPitch=0 } = req.body || {};
     const score = elapsed > 0 ? Math.round((goodSeconds / elapsed) * 100) : 0;
     Object.assign(session, {
@@ -236,17 +257,17 @@ app.get('/api/sessions/last', async (_req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// GET /api/sessions
+// GET /api/sessions  (list)
 app.get('/api/sessions', async (req, res, next) => {
   try {
     const filter = {};
     if (req.query.patientId) filter.patientId = req.query.patientId;
     if (req.query.status)    filter.status    = req.query.status;
-    const limit = Math.min(+req.query.limit || 20, 100);
-    const page  = Math.max(+req.query.page  || 1, 1);
-    const skip  = (page - 1) * limit;
+    const limit = Math.min(+(req.query.limit) || 20, 100);
+    const page  = Math.max(+(req.query.page)  || 1, 1);
     const [data, total] = await Promise.all([
-      Session.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).select('-__v').lean(),
+      Session.find(filter).sort({ createdAt: -1 })
+        .skip((page-1)*limit).limit(limit).select('-__v').lean(),
       Session.countDocuments(filter),
     ]);
     res.json({ data, total, page, limit, pages: Math.ceil(total / limit) });
@@ -272,7 +293,9 @@ app.patch('/api/sessions/:id', async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid status value' });
     if (!Object.keys(update).length)
       return res.status(400).json({ error: `Allowed fields: ${allowed.join(', ')}` });
-    const s = await Session.findByIdAndUpdate(req.params.id, { $set: update }, { new: true }).lean();
+    const s = await Session.findByIdAndUpdate(
+      req.params.id, { $set: update }, { new: true }
+    ).lean();
     if (!s) return res.status(404).json({ error: 'Session not found' });
     res.json({ ok: true, data: s });
   } catch (e) { next(e); }
@@ -298,9 +321,10 @@ app.delete('/api/sessions/:id', async (req, res, next) => {
 app.post('/api/patients', async (req, res, next) => {
   try {
     const { name, patientId } = req.body || {};
-    if (!name || !patientId) return res.status(400).json({ error: 'name and patientId are required' });
-    const exists = await Patient.findOne({ patientId }).lean();
-    if (exists) return res.status(409).json({ error: `patientId "${patientId}" already exists` });
+    if (!name || !patientId)
+      return res.status(400).json({ error: 'name and patientId are required' });
+    if (await Patient.findOne({ patientId }).lean())
+      return res.status(409).json({ error: `patientId "${patientId}" already exists` });
     const doc = await Patient.create(req.body);
     res.status(201).json(doc);
   } catch (e) { next(e); }
@@ -310,13 +334,14 @@ app.get('/api/patients', async (req, res, next) => {
   try {
     const filter = {};
     if (req.query.doctor) filter.doctor = req.query.doctor;
-    const limit = Math.min(+req.query.limit || 50, 200);
-    const page  = Math.max(+req.query.page  || 1, 1);
+    const limit = Math.min(+(req.query.limit) || 50, 200);
+    const page  = Math.max(+(req.query.page)  || 1, 1);
     const [data, total] = await Promise.all([
-      Patient.find(filter).sort({ name: 1 }).skip((page-1)*limit).limit(limit).select('-__v').lean(),
+      Patient.find(filter).sort({ name: 1 })
+        .skip((page-1)*limit).limit(limit).select('-__v').lean(),
       Patient.countDocuments(filter),
     ]);
-    res.json({ data, total, page, limit, pages: Math.ceil(total/limit) });
+    res.json({ data, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (e) { next(e); }
 });
 
@@ -369,13 +394,14 @@ app.get('/api/comments', async (req, res, next) => {
     const filter = {};
     if (req.query.patientId) filter.patientId = req.query.patientId;
     if (req.query.doctor)    filter.doctor    = req.query.doctor;
-    const limit = Math.min(+req.query.limit || 20, 100);
-    const page  = Math.max(+req.query.page  || 1, 1);
+    const limit = Math.min(+(req.query.limit) || 20, 100);
+    const page  = Math.max(+(req.query.page)  || 1, 1);
     const [data, total] = await Promise.all([
-      Comment.find(filter).sort({ createdAt: -1 }).skip((page-1)*limit).limit(limit).lean(),
+      Comment.find(filter).sort({ createdAt: -1 })
+        .skip((page-1)*limit).limit(limit).lean(),
       Comment.countDocuments(filter),
     ]);
-    res.json({ data, total, page, limit, pages: Math.ceil(total/limit) });
+    res.json({ data, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (e) { next(e); }
 });
 
@@ -394,7 +420,9 @@ app.patch('/api/comments/:id', async (req, res, next) => {
     allowed.forEach(k => { if (req.body[k] !== undefined) update[k] = req.body[k]; });
     if (!Object.keys(update).length)
       return res.status(400).json({ error: `Allowed fields: ${allowed.join(', ')}` });
-    const c = await Comment.findByIdAndUpdate(req.params.id, { $set: update }, { new: true }).lean();
+    const c = await Comment.findByIdAndUpdate(
+      req.params.id, { $set: update }, { new: true }
+    ).lean();
     if (!c) return res.status(404).json({ error: 'Comment not found' });
     await push('comment-updated', c);
     res.json({ ok: true, data: c });
@@ -420,39 +448,52 @@ app.delete('/api/comments', async (req, res, next) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// PUSHER AUTH
+// PUSHER AUTH  POST /api/pusher/auth
 // ─────────────────────────────────────────────────────────────
-
 app.post('/api/pusher/auth', (req, res) => {
+  if (!pusher) return res.status(503).json({ error: 'Pusher not configured' });
   const { socket_id, channel_name } = req.body || {};
   if (!socket_id || !channel_name)
     return res.status(400).json({ error: 'socket_id and channel_name required' });
-  const auth = pusher.authorizeChannel(socket_id, channel_name);
-  res.json(auth);
+  res.json(pusher.authorizeChannel(socket_id, channel_name));
 });
 
 // ─────────────────────────────────────────────────────────────
-// GLOBAL ERROR HANDLER
+// ROOT  — health check at /
 // ─────────────────────────────────────────────────────────────
+app.get('/', (_req, res) => {
+  res.json({
+    name    : 'SpineGuard API',
+    version : '1.0.0',
+    status  : 'ok',
+    docs    : 'See /api/status for health details',
+  });
+});
 
+// ─────────────────────────────────────────────────────────────
+// ERROR HANDLERS
+// ─────────────────────────────────────────────────────────────
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
   console.error('[Error]', err.message);
+  // CORS errors
+  if (err.message && err.message.startsWith('CORS:'))
+    return res.status(403).json({ error: err.message });
   res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
-// Catch-all for unknown routes
 app.use((_req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
 // ─────────────────────────────────────────────────────────────
-// EXPORT for Vercel (and listen locally if run directly)
+// EXPORT for Vercel + local dev
 // ─────────────────────────────────────────────────────────────
-
 module.exports = app;
 
 if (require.main === module) {
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => console.log(`[Server] Running on http://localhost:${PORT}`));
+  app.listen(PORT, () =>
+    console.log(`[SpineGuard API] http://localhost:${PORT}`)
+  );
 }
