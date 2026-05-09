@@ -1,8 +1,10 @@
 {
   "version": 2,
   "name": "spineguard-api",
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/server.js" },
-    { "source": "/(.*)", "destination": "/public/index.html" }
+  "builds": [
+    { "src": "server.js", "use": "@vercel/node" }
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "/server.js" }
   ]
 }
